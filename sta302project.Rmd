@@ -1,0 +1,260 @@
+---
+title: "STA302 term project"
+author: "Tanya Gupta Kothamachu"
+date: "2023-03-15"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+#knitr::opts_chunk$set(echo = TRUE)
+library(knitr)
+library(tidyverse)
+library(broom) 
+library(ggplot2)
+library(dplyr)
+library(readr)
+library(MASS)
+library(reshape2)
+library(ggrepel)
+library(UsingR)
+library(scatterplot3d)
+library(xtable)
+```
+
+```{r}
+library(car)
+library(Matrix)
+library(jtools)
+```
+
+ Combining datasets
+
+```{r, include=FALSE}
+#LOADING NBA PLAYER STATS
+df_2017 <- read_csv("Downloads/nba 2017-2018.csv")
+df_2018 <- read_csv("Downloads/nba 2018-2019 .csv")
+df_2019 <- read_csv("Downloads/nba 2019-2020.csv")
+df_2020 <- read_csv("Downloads/nba 2020-2021.csv")
+df_2021 <- read_csv("Downloads/2021-2022 NBA Player Stats - Regular.csv")
+df_2022 <- read_csv("Downloads/2022-2023 NBA Player Stats - Regular.csv")
+
+# LOADING SALARY DATASET
+df_salaries <- read_csv("Downloads/salaries.csv")
+```
+
+```{r}
+# ADDING A YEAR VARIABLE
+df_2017["Year"] <- 2017
+df_2018["Year"] <- 2018
+df_2019["Year"] <- 2019
+df_2020["Year"] <- 2020
+df_2021["Year"] <- 2021
+df_2022["Year"] <- 2022
+```
+
+```{r}
+# CHANGING VARIABLE NAME FROM NAME TO PLAYER
+names(df_salaries)[1] <- "Player"
+df_salaries$team <- NULL
+```
+
+```{r}
+#COMBINING PLAYER STATS DATASET INTO ONE 
+df <- rbind(df_2017,df_2018,df_2019,df_2020,df_2021,df_2022)
+
+# MERGING PLAYER STATS AND SALARY DATASETS
+df <- merge(df,df_salaries, by=c("Player","Year"))
+```
+
+```{r}
+## MODEL SUMMARIES
+df_sum <- df[,25:32]
+df_sum <- df_sum[,-5]
+kable(summary(df_sum))
+```
+
+
+REGRESSION ANALYSIS
+
+```{r}
+## MODEL WITH ALL THE VARIABLES
+model.full <- lm(salary ~ PTS + AST + TRB + STL + BLK +PF , data = df)
+summary(model.full)
+```
+
+MULTICOLLINEARITY
+
+```{r}
+vif(model.full)
+kable(tibble (variable = c("PTS","AST","TRB","STL","BLK","PK"),VIF = vif(model.full))) 
+```
+
+Leverage points
+
+```{r}
+## The hat values ###
+h <- hatvalues(model.full)
+thresh <- 2 * (dim(model.matrix(model.full))[2])/nrow(df)
+w <- which(h > thresh)
+#w
+#df[w,]
+
+
+### The Influential Observations ####
+D <- cooks.distance(model.full)
+D_inf <- which(D > 4/nrow(df))
+```
+
+Removing leverage points
+
+```{r}
+df1 <- df[-D_inf,]
+```
+
+MODEL SELECTION
+
+```{r}
+# STEPWISE SELECTION
+
+model.lm <- lm(salary ~ ., data = df1[,25:32])
+#summary(model.lm)  
+n <- nrow(df1)
+sel.var.aic <- step(model.lm, trace = 0, k = 2, direction = "both") 
+sel.var.aic<-attr(terms(sel.var.aic), "term.labels")   
+sel.var.aic
+
+## Based on BIC ##
+model.lm <- lm(salary ~ ., data = df1[,25:32])
+summary(model.lm)  
+n <- nrow(df1)
+sel.var.bic <- step(model.lm, trace = 0, k = log(n), direction = "both") 
+sel.var.bic<-attr(terms(sel.var.bic), "term.labels")   
+sel.var.bic
+```
+
+```{r}
+#MODEL WITH ALL SELECTED VARIABLES
+
+model.final <- lm(salary ~ PTS + TRB + AST + BLK + PF, data = df1)
+summary(model.final)
+```
+
+```{r}
+#COEFF TABLE - MODEL 1
+
+library(stargazer)
+sumfin <- summary(model.final)
+coef_table <- sumfin$coefficients
+# Create a LaTeX table with stargazer
+stargazer(coef_table, 
+          type = "latex", 
+          title = "Regression Results")
+
+
+```
+
+DIAGNOSTICS
+
+```{r}
+# NORMAL Q-Q PLOT AND STANDARDISED RESIDUAL PLOT FOR MODEL 1 
+
+resid <- rstudent(model.final)
+fitted <- predict(model.final)
+
+par(family = 'serif', mfrow = c(1,2))
+qqnorm(resid)
+qqline(resid)
+
+plot(resid ~ fitted, type = "p", xlab = "Fitted Values", 
+     ylab = "Standardized Residual", cex.lab = 1.2,
+     col = "red", main = "Residual vs fitted value plot") 
+lines(lowess(fitted, resid), col = "blue")
+#abline(lm(resid ~ fitted), lwd = 2, col = "blue")
+```
+
+```{r}
+# RESPONSE VS FITTED VALUES PLOT FOR MODEL 1
+par(family = 'serif')
+plot(df1$salary ~ fitted, type = "p", xlab = "Fitted Values", 
+     ylab = "salary", cex.lab = 1.2,
+     col = "red", main = "Response vs fitted value plot")
+abline(lm(df1$salary ~ fitted), lwd = 2, col = "blue")
+lines(lowess(fitted, df1$salary), col = "black")
+
+```
+
+```{r}
+# TO FIX PROBLEM OF HAVING VALUES = 0 FOR POWER TRANSFORM FUNCTION
+df1$salary1 <- df1$salary + 1
+df1$PTS1 <- df1$PTS + 1
+df1$AST1 <- df1$AST + 1
+df1$TRB1 <- df1$TRB + 1
+df1$BLK1 <- df1$BLK + 1
+df1$PF1 <- df1$PF + 1
+```
+
+```{r}
+# BOX-COX TRANSFORMATION
+pt <- powerTransform(salary ~ AST + PTS + TRB + BLK + PF, data = df)
+sum12 <- summary(pt)
+pt_summary <- data.frame(
+  variable = "Y1",
+  Est_Power = sum12$result[1],
+  Rounded_Power = sum12$result[2],
+  Lower_CI = sum12$result[3],
+  Upper_CI = sum12$result[4]
+)
+rownames(pt_summary) <- NULL
+kable(pt_summary, format = "markdown")
+
+```
+
+
+```{r}
+# FINAL REGRESSION MODEL WITH NON - LINEAR TRANSFORMATION (MODEL 2)
+model.box <- lm(bcPower(salary1,pt$roundlam) ~ AST1 + PTS1 + TRB1 + BLK1 + PF1, data = df1)
+sum1 <- summary(model.box)
+sum1
+
+```
+
+```{r}
+# NORMAL Q-Q PLOT AND STANDARDISED RESIDUAL PLOT FOR MODEL 2 
+r.new <- rstudent(model.box)
+fitted.new <- predict(model.box)
+
+
+par(family = 'serif', mfrow = c(1,2))
+qqnorm(r.new)
+#qqline(r.new)
+abline(a = 0, b = 1)
+plot(r.new ~ fitted.new, type = "p", xlab = "Fitted Values", 
+     ylab = "Standardized Residual", cex.lab = 1.2,
+     col = "red", main = "Residual vs fitted value plot")
+lines(lowess(fitted.new, r.new), col = "blue")
+```
+
+```{r}
+
+# RESPONSE VS FITTED VALUES PLOT FOR MODEL 2
+model_fit <- lm(bcPower(salary1,pt$roundlam) ~ fitted, data = df1)
+sum2 <- summary(model_fit)
+slope <- sum2$coefficient[2]
+intercept <-sum2$coefficient[1]
+
+pdf("reponse vs fitted.pdf", width = 5, height = 4)
+par(family = 'serif')
+plot(bcPower(df1$salary1,pt$roundlam) ~ fitted, type = "p", xlab = "Fitted Values", 
+     ylab = expression(("salary")^0.23), cex.lab = 0.8,
+     col = "red", main = "Response vs fitted value plot")
+abline(a = intercept, b = slope, lwd = 2.5, col = "blue")
+lines(lowess(fitted, bcPower(df1$salary1,pt$roundlam)),lwd = 2.5, col = "black")
+
+```
+
+```{r}
+#ANOVA for MODEL 2
+kable(anova(model.box), digits = 2, caption = "ANOVA table")
+```
+
+
